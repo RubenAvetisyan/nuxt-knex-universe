@@ -1,6 +1,5 @@
-import { Nitro } from 'nitropack'
+import type { Nitro } from 'nitropack'
 
 export default async (_nitroApp: Nitro) => {
     console.log('_nitroApp: ', _nitroApp.options);
-
 }

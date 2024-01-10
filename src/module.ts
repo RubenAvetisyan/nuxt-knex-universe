@@ -22,33 +22,36 @@ import { version } from '../package.json'
 const sqliteConnectionSchema = z.object({
   client: z.literal('sqlite3'),
   connection: z.object({
-    filename: z.string(),
+    filename: z.string().refine(value => value.length > 0, { message: 'Filename is required' }),
     flags: z.union([z.literal('OPEN_URI'), z.literal('OPEN_SHAREDCACHE')]).optional()
   }).strict()
-});
+}).refine((value) => typeof value === 'object', { message: 'Invalid sqlite3 connection' });
 
 const mySqlConnectionSchema = z.object({
   client: z.literal('mysql'),
   connection: z.object({
-    host: z.string(),
-    port: z.string(),
+    host: z.union([
+      z.string().ip().refine(value => value.length > 0, { message: 'Host is required' }),
+      z.literal('localhost')
+    ]),
+    port: z.string().default('3306'),
     user: z.string(),
     password: z.string(),
-    database: z.string(),
+    database: z.string().refine(value => value.length > 0, { message: 'Database name is required' }),
   }).strict()
-});
+}).refine((value) => typeof value === 'object', { message: 'Invalid mysql connection' });
 
 // Add other connection schemas as needed
 
 // Union of different connection configurations
 const ConnectionConfigSchema = z.union([
-  sqliteConnectionSchema,
+  sqliteConnectionSchema.refine((value) => value.client === 'sqlite3' && value.connection.filename.length > 0, { message: 'Filename is required' }),
   mySqlConnectionSchema,
   // Add other connection schemas here
 ]);
 
 const ModuleOptionsSchema = z.object({
-  configs: z.array(ConnectionConfigSchema).nullable()
+  configs: z.array(ConnectionConfigSchema).refine((value) => Array.isArray(value), { message: 'Invalid connection' }),
 }).strict();
 
 
@@ -76,7 +79,16 @@ export default defineNuxtModule<ModuleOptions>({
   },
   // Default configuration options of the Nuxt module
   defaults: {
-    configs: null
+    configs: [{
+      client: 'mysql',
+      connection: {
+        host: 'localhost',
+        port: '3306',
+        user: 'root',
+        password: 'password',
+        database: 'database'
+      }
+    }]
   },
   async setup(options, nuxt) {
     try {
@@ -87,22 +99,29 @@ export default defineNuxtModule<ModuleOptions>({
       //   }).catch(() => { })
       // }
 
-      if (!options?.configs) {
+      const { resolve } = createResolver(import.meta.url)
+
+      const safeOption = ModuleOptionsSchema.safeParse(options)
+
+
+      if (!safeOption.success) throw new Error(`validation error: ${safeOption.error}`)
+
+      const configs = safeOption?.data.configs
+
+      if (!configs) {
         logger.fatal(noConfigsMessage)
-        await nuxt.close()
         throw new Error("'knexConnections.configs' is not defined")
       }
 
-      const { resolve } = createResolver(import.meta.url)
+      configs.forEach((c) => {
+        if (c.client === 'sqlite3' && c.connection.filename) {
+          c.connection.filename = resolve(c.connection.filename)
+        }
+      })
 
-      const safeOption = ModuleOptionsSchema.safeParse(options.configs)
-
-
-      if (!safeOption.success) throw new Error(safeOption.error.message)
-
+      // merge configs
       const config = nuxt.options.runtimeConfig as any
-
-      config.knexConnections = defu(config.knexConnections?.configs || {}, { configs: safeOption.data })
+      config.knexConnections = defu(config.knexConnections?.configs || {}, { configs })
 
       // virtual imports
       nuxt.hook('nitro:config', (_config) => {
@@ -114,10 +133,18 @@ export default defineNuxtModule<ModuleOptions>({
         })
         _config.alias['#nuxt/knex-universe'] = resolve('./runtime/server/services')
 
-        // if (_config.imports) {
-        //   _config.imports.dirs = _config.imports.dirs || []
-        //   _config.imports.dirs?.push(config.mongoose.modelsDir)
-        // }
+        if (_config.imports) {
+          _config.imports.dirs = _config.imports.dirs || []
+
+          if ('knexConnections' in _config) {
+            _config.imports.dirs?.push(config.knexConnections.connection.filename)
+          } else {
+            _config = defu(_config, {
+              knexConnections: safeOption?.data
+            })
+          }
+          // _config.imports.dirs?.push(config.knexConnections.modelsDir)
+        }
       })
 
       addTemplate({
@@ -148,6 +175,7 @@ export default defineNuxtModule<ModuleOptions>({
       logger.success('`nuxt-knex-universe` is ready!')
     } catch (error: any) {
       logger.error(error.message)
+      await nuxt.close()
     }
   }
 })
