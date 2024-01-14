@@ -1,199 +1,110 @@
 import { logger } from '@nuxt/kit'
 import knex, { Knex } from 'knex'
+import { z } from 'zod'
 import defu from 'defu'
 import { Pool } from './pool-class'
 import { cronManager } from './cron-class'
 
 import type { CronManager, Interval } from './cron-class'
+import type { ModuleOptions } from '../../types'
+import { ConnectionConfigSchema, sqlite3ConnectionSchema, mySqlConnectionSchema } from '../../types'
 
-type KnexPoolOptions = {
-    restart?: Interval
+export class KnexConnection {
+    private knex = knex
+    private pool: Pool
+
+    constructor(public config: ModuleOptions['configs'][number]) {
+        this.pool = new Pool(this.knex(this.config))
+    }
+
+    get connection() {
+        return this.pool.pool.connection
+    }
+
+    get poolInspector() {
+        return this.pool.getInspector()
+    }
+
+    get _pool() {
+        return this.pool
+    }
 }
 
-/**
- * The client property specifies the type of database client to be used for the connection.
- * Possible values:
- *   - 'pg' for PostgreSQL (https://github.com/brianc/node-postgres),
- *   - 'pg-native' for PostgreSQL with native C++ libpq bindings (requires PostgresSQL installed to link against. Check https://github.com/brianc/node-pg-native),
- *   - 'mysql' for MySQL or MariaDB (https://github.com/mysqljs/mysql),
- *   - 'sqlite3' for SQLite3 (https://github.com/TryGhost/node-sqlite3),
- *   - 'tedious' for MSSQL (https://github.com/tediousjs/tedious).
- */
-export type Client =
-    | 'mssql'
-    | 'mysql'
-    | 'mysql2'
-    | 'oracledb'
-    | 'pg'
-    | 'postgres'
-    | 'postgresql'
-    | 'pgnative'
-    | 'redshift'
-    | 'sqlite'
-    | 'sqlite3'
-    | 'cockroachdb'
-    | 'better-sqlite3'
-
-
-type MySQLandPgPollConfig = { pool: { min: number; max: number; }; }
-/**
- * The Connection interface contains the details for connecting to the database, including the host, port, username, password, and database name.
- */
-export interface Connection {
-    /**
-     * The host of the database server.
-     */
-    host: string;
-
-    /**
-     * The port of the database server.
-     */
-    port: string;
-
-    /**
-     * The username for authenticating with the database server.
-     */
-    user: string;
-
-    /**
-     * The password for authenticating with the database server.
-     */
-    password: string;
-
-    /**
-     * The name of the database.
-     */
-    database: string;
-    pool?: MySQLandPgPollConfig
+function makeSchemaOptional<T extends ModuleOptions['configs'][number]>(schema: T) {
+    return schema.client === 'sqlite3' ? sqlite3ConnectionSchema : mySqlConnectionSchema
 }
 
-export type DbConfig = {
-    client: Client
-    connection: Connection
-}
-export type ExactConnection<T extends DbConfig> = T['connection']
-export type DbName<T extends DbConfig> = ExactConnection<T>['database']
-
-export type RT<O extends DbConfig, T extends (P: O) => any> = ReturnType<T>
-
-type KnexConnectionOptions = {
-    pool: KnexPoolOptions
+function getKey<T extends ModuleOptions['configs'][number]>(schema: T) {
+    return z.literal(schema.client === 'sqlite3' ? schema.connection.filename : schema.connection.database)
 }
 
-type ExtendedConfig<T extends DbConfig> = T & { pool: MySQLandPgPollConfig } | T
+function makeMap<T extends ModuleOptions['configs'][number]>(schema: T) {
+    const key = getKey(schema)
+    return z.map(key, z.instanceof(Pool))
+}
 
-export class KnexConnection<T extends DbConfig>{
-    private config: ExtendedConfig<T>
-    private pools: Map<DbName<DbConfig>, Pool> = new Map()
+function CP<T extends Pool>(schema: T) {
+    return schema.pool.connection.client.database()
+}
 
-    constructor(config: T, public options?: KnexConnectionOptions) {
-        this.config = ['mysql', 'pg'].includes(config.client)
-            ? { ...config, pool: { min: 0, max: 7 } }
-            : config;
-        this.init()
+const poolsScheam = z.map(z.string(), z.instanceof(Pool))
+
+export class KnexUniverce<T extends ModuleOptions['configs']> {
+    public pools = poolsScheam.parse(new Map())
+    constructor(configs: T) {
+        this.init(configs)
     }
 
-    init() {
-        this.createPool()
-    }
-
-    get client() {
-        return this.config.client
-    }
-
-    get connectionOptions() {
-        return this.config.connection
-    }
-
-    get dbName() {
-        return this.config.connection.database
-    }
-
-    onTick(dbName: DbName<T>) {
-        logger.info(`Перезапуск пула ${dbName}`)
-        this.restartPool(dbName)
-    }
-
-    setJob(dbName: DbName<T>, interval: Interval) {
-        cronManager.scheduleJob(`${dbName}-pool-restart`, {
-            interval,
-            onTick: () => this.onTick(dbName),
+    private init(configs: T) {
+        configs.forEach((config) => {
+            const pool = new KnexConnection(config)
+            const key = config.client === 'sqlite3' ? config.connection.filename : config.connection.database
+            makeMap(config).parse(this.pools.set(key, pool._pool))
         })
     }
 
-    createPool(options?: KnexPoolOptions) {
-        const connection = knex(this.config)
-        const thisPool = new Pool(connection)
-        this.pools.set(this.dbName, thisPool)
-
-        if (options?.restart && 'unit' in options.restart && 'value' in options.restart) {
-            this.setJob(this.dbName, options.restart)
-        }
-
-        return thisPool.pool
+    get dbs() {
+        const pools = [...this.pools.entries()] as const
+        return {
+            ...Object.fromEntries(pools.map(([key, pool]) => [key, this.getPool(key)!]))
+        } as const
     }
 
-    poolExists(dbName: DbName<T>) {
-        console.log('dbName: ', dbName);
-        return this.pools.has(dbName)
+    getPool(key: string) {
+        return this.pools.get(key)?.pool.connection
     }
 
-    public getPool(dbName: DbName<T>): Knex {
-        console.log('this.poolExists(dbName): ', this.poolExists(dbName));
-        if (!this.poolExists(dbName)) {
-            this.createPool(this.options?.pool)
-        }
-
-        return this.pools.get(dbName)?.pool.connection!
+    get queryBuilders() {
+        const pools = [...this.pools.entries()] as const
+        return {
+            ...Object.fromEntries(pools.map(([key, pool]) => [key, this.getPool(key)!.queryBuilder]))
+        } as const
     }
 
-    private async restartPool(dbName: DbName<T>): Promise<void> {
-        try {
-            const pool = this.getPool(dbName)
-            if (pool) {
-                await pool.destroy()
-                this.pools.delete(dbName)
-                this.createPool(this.options?.pool)
-            }
-        } catch (error) {
-            logger.warn(`Ошибка при перезапуске пула ${dbName}:`, error)
-        }
+    get schemas() {
+        const pools = [...this.pools.entries()] as const
+        return {
+            ...Object.fromEntries(pools.map(([key, pool]) => [key, this.getPool(key)!.schema]))
+        } as const
     }
 
-    /**
-     * Restarts all the pools.
-     *
-     * @return {Promise<void>} The promise that resolves when all the pools are restarted.
-     */
-    private async restartAllPools(): Promise<void> {
-        try {
-            for (const thisPool of this.pools.values()) {
-                await thisPool.pool.connection.destroy()
-            }
-            this.pools.clear()
-            this.createPool(this.options?.pool)
-        } catch (error) {
-            logger.warn('Ошибка при перезапуске пулов:')
-            logger.error(error)
-            // Запланировать повторный перезапуск через 5 минут
-            setTimeout(() => this.restartAllPools(), 5 * 60 * 1000)
-        }
+    get clients() {
+        const pools = [...this.pools.entries()] as const
+        return {
+            ...Object.fromEntries(pools.map(([key, pool]) => [key, this.getPool(key)!.client]))
+        } as const
     }
 
-    public async executeQuery<Q>(
-        query: string,
-        parameters: any[] = [],
-    ): Promise<Q[]> {
-        const connection = this.getPool(this.dbName)
-        try {
-            // Установка group_concat_max_len перед основным запросом
-            await connection.raw('SET SESSION group_concat_max_len = 5000000')
+    get poolInspectors() {
+        const pools = [...this.pools.entries()] as const
+        return {
+            ...Object.fromEntries(pools.map(([key, pool]) => [key, pool.getInspector()]))
+        } as const
+    }
 
-            const [result = []] = await connection.raw(query, parameters)
-            return result
-        } catch (error) {
-            logger.warn(`Ошибка при выполнении запроса: ${query}`, error)
-            throw error
-        }
+    setJob(key: string, onTick: () => Promise<void>, interval: Interval) {
+        const pool = this.getPool(key)!
+
+        cronManager.scheduleJob(key, { interval, onTick })
     }
 }

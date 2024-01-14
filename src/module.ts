@@ -9,50 +9,15 @@ import {
   logger,
   addTemplate
 } from '@nuxt/kit'
-import { z } from 'zod'
 import defu from 'defu'
 import { version } from '../package.json'
+import { ModuleOptionsSchema } from './types';
 // import { databases } from './knex/connection-class'
 
 // const ClientSchema = z.enum([
 //   'mssql', 'mysql', 'mysql2', 'oracledb', 'pg', 'postgres', 'postgresql',
 //   'pgnative', 'redshift', 'sqlite', 'sqlite3', 'cockroachdb', 'better-sqlite3'
 // ]);
-
-const sqliteConnectionSchema = z.object({
-  client: z.literal('sqlite3'),
-  connection: z.object({
-    filename: z.string().refine(value => value.length > 0, { message: 'Filename is required' }),
-    flags: z.union([z.literal('OPEN_URI'), z.literal('OPEN_SHAREDCACHE')]).optional()
-  }).strict()
-}).refine((value) => typeof value === 'object', { message: 'Invalid sqlite3 connection' });
-
-const mySqlConnectionSchema = z.object({
-  client: z.literal('mysql'),
-  connection: z.object({
-    host: z.union([
-      z.string().ip().refine(value => value.length > 0, { message: 'Host is required' }),
-      z.literal('localhost')
-    ]),
-    port: z.string().default('3306'),
-    user: z.string(),
-    password: z.string(),
-    database: z.string().refine(value => value.length > 0, { message: 'Database name is required' }),
-  }).strict()
-}).refine((value) => typeof value === 'object', { message: 'Invalid mysql connection' });
-
-// Add other connection schemas as needed
-
-// Union of different connection configurations
-const ConnectionConfigSchema = z.union([
-  sqliteConnectionSchema.refine((value) => value.client === 'sqlite3' && value.connection.filename.length > 0, { message: 'Filename is required' }),
-  mySqlConnectionSchema,
-  // Add other connection schemas here
-]);
-
-const ModuleOptionsSchema = z.object({
-  configs: z.array(ConnectionConfigSchema).refine((value) => Array.isArray(value), { message: 'Invalid connection' }),
-}).strict();
 
 
 const noConfigsMessage = `This error message is indicating that the "knex config" variable is not defined. 
@@ -64,7 +29,8 @@ You can have multiple connection options in the "config" array to make multiple 
 /**
  * Module options TypeScript interface definition.
  */
-export type ModuleOptions = z.infer<typeof ModuleOptionsSchema>
+import type { ModuleOptions } from './types';
+
 
 export default defineNuxtModule<ModuleOptions>({
   meta: {
@@ -79,16 +45,7 @@ export default defineNuxtModule<ModuleOptions>({
   },
   // Default configuration options of the Nuxt module
   defaults: {
-    configs: [{
-      client: 'mysql',
-      connection: {
-        host: 'localhost',
-        port: '3306',
-        user: 'root',
-        password: 'password',
-        database: 'database'
-      }
-    }]
+    configs: []
   },
   async setup(options, nuxt) {
     try {
@@ -115,7 +72,7 @@ export default defineNuxtModule<ModuleOptions>({
 
       configs.forEach((c) => {
         if (c.client === 'sqlite3' && c.connection.filename) {
-          c.connection.filename = resolve(c.connection.filename)
+          c.connection.filename = [':memory:', 'file:memDb1?mode=memory&cache=shared'].includes(c.connection.filename) ? c.connection.filename : resolve(c.connection.filename)
         }
       })
 

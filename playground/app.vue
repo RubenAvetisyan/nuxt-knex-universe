@@ -1,13 +1,6 @@
 <template>
   <div>
-      Nuxt module playground! {{ data }}
-  </div>
+      Nuxt module playground!
+    </div>
+    <NuxtPage />
 </template>
-
-<script setup>
-const { data } = await useFetch('/api/knex', {
-  method: 'get',
-  server: flase
-}
-)
-</script>

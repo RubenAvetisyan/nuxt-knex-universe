@@ -43,6 +43,9 @@ devDependencies:
   knex:
     specifier: ^3.1.0
     version: 3.1.0(mysql@2.18.1)(sqlite3@5.1.7)
+  knex-mock-client:
+    specifier: ^2.0.1
+    version: 2.0.1(knex@3.1.0)
   knex-schema-inspector:
     specifier: ^3.1.0
     version: 3.1.0
@@ -1509,6 +1512,7 @@ packages:
     dependencies:
       is-glob: 4.0.3
       micromatch: 4.0.5
+      napi-wasm: 1.1.0
     dev: true
     bundledDependencies:
       - napi-wasm
@@ -4563,6 +4567,16 @@ packages:
     engines: {node: '>= 8'}
     dev: true
 
+  /knex-mock-client@2.0.1(knex@3.1.0):
+    resolution: {integrity: sha512-tSNaht+aquo6SgEhwPYidfYWVS2IUbF2ZNu4Ye0mScGTmyS+ZTJzpAkogpUIDwiZbkjIg/bvsopRDM/Lbdt+Mw==}
+    engines: {node: '>=12'}
+    peerDependencies:
+      knex: '>=2.0.0'
+    dependencies:
+      knex: 3.1.0(mysql@2.18.1)(sqlite3@5.1.7)
+      lodash.clonedeep: 4.5.0
+    dev: true
+
   /knex-schema-inspector@3.1.0:
     resolution: {integrity: sha512-qEwBs7bDSufTq5bOiT783KS3g340WjidmTKA0Iu3Fxw50Iot1sIeAaQ5mjdKjRhdVwbSy2t/RdRxJqLnh2KWhw==}
     dependencies:
@@ -4692,6 +4706,10 @@ packages:
     engines: {node: '>=10'}
     dependencies:
       p-locate: 5.0.0
+    dev: true
+
+  /lodash.clonedeep@4.5.0:
+    resolution: {integrity: sha512-H5ZhCF25riFd9uB5UCkVKo61m3S/xZk1x4wA6yp/L3RFP6Z/eHH1ymQcGLo7J3GMPfm0V/7m1tryHuGVxpqEBQ==}
     dev: true
 
   /lodash.debounce@4.0.8:
@@ -5085,6 +5103,10 @@ packages:
 
   /napi-build-utils@1.0.2:
     resolution: {integrity: sha512-ONmRUqK7zj7DWX0D9ADe03wbwOBZxNAfF20PlGfCWQcD3+/MakShIHrMqx9YwPTfxDdF1zLeL+RGZiR9kGMLdg==}
+    dev: true
+
+  /napi-wasm@1.1.0:
+    resolution: {integrity: sha512-lHwIAJbmLSjF9VDRm9GoVOy9AGp3aIvkjv+Kvz9h16QR3uSVYH78PNQUnT2U4X53mhlnV2M7wrhibQ3GHicDmg==}
     dev: true
 
   /natural-compare@1.4.0:
@@ -7822,6 +7844,7 @@ packages:
 
   /wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+    requiresBuild: true
     dev: true
 
   /ws@8.16.0:
