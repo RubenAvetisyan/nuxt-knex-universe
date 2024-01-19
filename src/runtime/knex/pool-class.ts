@@ -8,7 +8,7 @@ interface PoolObject {
 }
 
 export class Pool {
-    public _pool: PoolObject
+    private _pool: PoolObject
     constructor(connection: Knex) {
         this._pool = {
             connection,

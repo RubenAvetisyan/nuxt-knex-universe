@@ -28,6 +28,10 @@ export class KnexConnection {
     get _pool() {
         return this.pool
     }
+
+    get dbName() {
+        return this.connection.client.database()
+    }
 }
 
 function makeSchemaOptional<T extends ModuleOptions['configs'][number]>(schema: T) {
@@ -51,16 +55,38 @@ const poolsScheam = z.map(z.string(), z.instanceof(Pool))
 
 export class KnexUniverce<T extends ModuleOptions['configs']> {
     public pools = poolsScheam.parse(new Map())
+    private configs: T
     constructor(configs: T) {
-        this.init(configs)
+        this.configs = configs
+        this.init()
     }
 
-    private init(configs: T) {
-        configs.forEach((config) => {
-            const pool = new KnexConnection(config)
-            const key = config.client === 'sqlite3' ? config.connection.filename : config.connection.database
-            makeMap(config).parse(this.pools.set(key, pool._pool))
+    private init() {
+        this.configs.forEach((config) => {
+            this.createPool(config)
         })
+    }
+
+    getKey(config: T[number]) {
+        return config.client === 'sqlite3' ? config.connection.filename : config.connection.database
+    }
+
+    createPool(config: T[number]) {
+        const pool = new KnexConnection(config)
+        const key = pool.dbName // this.getKey(config)
+
+        cronManager.scheduleJob(`${key}-pool-restart`, {
+            interval: {
+                value: 3,
+                unit: 'hours',
+            },
+            onTick: () => {
+                console.log(`Перезапуск пула ${key}`)
+                this.restartPool(pool)
+            },
+        })
+
+        makeMap(config).parse(this.pools.set(key, pool._pool))
     }
 
     get dbs() {
@@ -106,5 +132,17 @@ export class KnexUniverce<T extends ModuleOptions['configs']> {
         const pool = this.getPool(key)!
 
         cronManager.scheduleJob(key, { interval, onTick })
+    }
+
+    private async restartPool(pool: KnexConnection): Promise<void> {
+        const dbName = pool.dbName
+        try {
+            await pool.connection.destroy()
+            this.pools.delete(dbName)
+            const config = this.configs.find((config) => this.getKey(config) === dbName)!
+            this.createPool(config)
+        } catch (error: any) {
+            createError({ statusCode: 500, message: `Ошибка при перезапуске пула ${dbName}:`, stack: error.stack })
+        }
     }
 }
